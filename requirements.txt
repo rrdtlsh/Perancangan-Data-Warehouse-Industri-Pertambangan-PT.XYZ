@@ -1,3 +1,4 @@
 pandas
-pymssql
+pyodbc
+python-dotenv
 sqlalchemy

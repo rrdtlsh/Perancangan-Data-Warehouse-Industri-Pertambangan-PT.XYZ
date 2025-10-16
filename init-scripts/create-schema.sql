@@ -287,6 +287,36 @@ CREATE TABLE staging.FinancialTransaction (
     cost DECIMAL(12,2)
 );
 
+-- Staging table for Maintenance
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'staging') EXEC('CREATE SCHEMA staging');
+GO
+IF OBJECT_ID('staging.Maintenance', 'U') IS NOT NULL DROP TABLE staging.Maintenance;
+GO
+CREATE TABLE staging.Maintenance (
+    maintenance_id INT,
+    date DATE,
+    equipment_name VARCHAR(255),
+    site_name VARCHAR(255),
+    maintenance_cost DECIMAL(18, 2),
+    downtime_duration_hours INT
+);
+GO
+
+-- Fact table for Maintenance
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'fact') EXEC('CREATE SCHEMA fact');
+GO
+IF OBJECT_ID('fact.FactMaintenance', 'U') IS NOT NULL DROP TABLE fact.FactMaintenance;
+GO
+CREATE TABLE fact.FactMaintenance (
+    maintenance_key INT IDENTITY(1,1) PRIMARY KEY,
+    time_key INT FOREIGN KEY REFERENCES dim.DimTime(time_key),
+    equipment_key INT FOREIGN KEY REFERENCES dim.DimEquipment(equipment_key),
+    site_key INT FOREIGN KEY REFERENCES dim.DimSite(site_key),
+    maintenance_cost DECIMAL(18, 2),
+    downtime_duration_hours INT
+);
+GO
+
 -- ======================
 -- INDEXES FOR PERFORMANCE
 -- ======================

@@ -1,86 +1,52 @@
 #!/bin/bash
 
-# PT XYZ Data Warehouse - Database Initialization Script
-# This script initializes the data warehouse database and schema
+# Konfigurasi
+SERVER="host.docker.internal"
+DB_NAME="PTXYZ_DataWarehouse"
+PASSWORD="PTXYZSecure123!" # Ganti jika password di .env Anda berbeda
+SCHEMA_FILE="/docker-entrypoint-initdb.d/create-schema.sql"
 
-echo "🚀 Starting PT XYZ Data Warehouse initialization..."
+echo "🚀 Starting Data Warehouse initialization..."
 
-# Wait for SQL Server to be ready
-echo "⏳ Waiting for SQL Server to be ready..."
+# Tunggu SQL Server benar-benar siap
+echo "⏳ Waiting for SQL Server at $SERVER..."
 sleep 45
 
-# Maximum retry attempts
-MAX_RETRIES=10
-RETRY_COUNT=0
-
-# Function to test SQL Server connection
-test_connection() {
-    /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "${SA_PASSWORD}" -Q "SELECT 1" -C -N > /dev/null 2>&1
-    return $?
-}
-
-# Wait for SQL Server to be fully ready
-echo "🔍 Testing SQL Server connection..."
-while ! test_connection && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    echo "   Attempt $RETRY_COUNT/$MAX_RETRIES - SQL Server not ready yet, waiting 10 seconds..."
-    sleep 10
+# Loop untuk mengetes koneksi
+for i in {1..10}; do
+    /opt/mssql-tools18/bin/sqlcmd -S "$SERVER" -U "sa" -P "$PASSWORD" -Q "SELECT 1" -C -N > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "✅ SQL Server is ready!"
+        break
+    else
+        echo "   Attempt $i/10 - SQL Server not ready yet, waiting 10 seconds..."
+        sleep 10
+    fi
 done
 
-if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo "❌ Failed to connect to SQL Server after $MAX_RETRIES attempts"
+# Periksa lagi setelah loop selesai
+/opt/mssql-tools18/bin/sqlcmd -S "$SERVER" -U "sa" -P "$PASSWORD" -Q "SELECT 1" -C -N > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "❌ Failed to connect to SQL Server after all attempts. Exiting."
     exit 1
 fi
 
-echo "✅ SQL Server is ready!"
-
-# Create the PTXYZ_DataWarehouse database
-echo "📊 Creating PTXYZ_DataWarehouse database..."
-/opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "${SA_PASSWORD}" -C -N -Q "
-IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'PTXYZ_DataWarehouse')
-BEGIN
-    CREATE DATABASE PTXYZ_DataWarehouse;
-    PRINT 'Database PTXYZ_DataWarehouse created successfully';
-END
-ELSE
-BEGIN
-    PRINT 'Database PTXYZ_DataWarehouse already exists';
-END
-"
-
-if [ $? -eq 0 ]; then
-    echo "✅ Database creation completed"
-else
-    echo "❌ Database creation failed"
+# Buat database
+echo "📊 Creating database $DB_NAME..."
+/opt/mssql-tools18/bin/sqlcmd -S "$SERVER" -U "sa" -P "$PASSWORD" -C -N -Q "IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = N'$DB_NAME') CREATE DATABASE [$DB_NAME];"
+if [ $? -ne 0 ]; then
+    echo "❌ Database creation failed. Exiting."
     exit 1
 fi
+echo "✅ Database created or already exists."
 
-# Execute the schema creation script
-echo "🏗️  Creating database schema..."
-/opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "${SA_PASSWORD}" -d PTXYZ_DataWarehouse -C -N -i /docker-entrypoint-initdb.d/create-schema.sql
-
-if [ $? -eq 0 ]; then
-    echo "✅ Schema creation completed successfully"
-else
-    echo "❌ Schema creation failed"
+# Jalankan skrip skema
+echo "🏗️  Creating schema from $SCHEMA_FILE..."
+/opt/mssql-tools18/bin/sqlcmd -S "$SERVER" -U "sa" -P "$PASSWORD" -d "$DB_NAME" -C -N -i "$SCHEMA_FILE"
+if [ $? -ne 0 ]; then
+    echo "❌ Schema creation failed. Exiting."
     exit 1
 fi
+echo "✅ Schema creation completed successfully."
 
-# Verify the schema was created
-echo "🔍 Verifying schema creation..."
-/opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "${SA_PASSWORD}" -d PTXYZ_DataWarehouse -C -N -Q "
-SELECT 
-    'Schema: ' + s.name as info
-FROM sys.schemas s 
-WHERE s.name IN ('dim', 'fact', 'staging')
-UNION ALL
-SELECT 
-    'Table: ' + s.name + '.' + t.name as info
-FROM sys.tables t
-JOIN sys.schemas s ON t.schema_id = s.schema_id
-WHERE s.name IN ('dim', 'fact', 'staging')
-ORDER BY info;
-"
-
-echo "🎉 PT XYZ Data Warehouse initialization completed successfully!"
-echo "📈 Ready for ETL operations!"
+echo "🎉 Initialization completed successfully!"

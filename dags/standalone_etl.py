@@ -5,11 +5,12 @@ This script runs the complete ETL pipeline without Airflow dependencies
 """
 
 import pandas as pd
-import pymssql
+import pyodbc
 import logging
 import logging
 import time
 import os
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -22,19 +23,29 @@ logging.basicConfig(
 )
 
 def get_sql_connection():
-    """Create SQL Server connection"""
+    """Create SQL Server connection using pyodbc"""
     try:
-        conn = pymssql.connect(
-            server='localhost',
-            port=1433,
-            database='PTXYZ_DataWarehouse',
-            user='sa',
-            password='PTXYZSecure123!',
-            timeout=30
+        # Mengambil password dari environment variable
+        load_dotenv()
+        db_password = os.getenv('MSSQL_SA_PASSWORD')
+        if not db_password:
+            raise ValueError("Password SQL Server tidak ditemukan di environment variable MSSQL_SA_PASSWORD")
+
+        conn_str = (
+            r'DRIVER={ODBC Driver 18 for SQL Server};'
+            r'SERVER=sqlserver,1433;'
+            r'DATABASE=PTXYZ_DataWarehouse;'
+            r'UID=sa;'
+            r'PWD=' + db_password + ';'
+            r'TrustServerCertificate=yes;'
         )
+
+        logging.info("Attempting to connect to SQL Server using pyodbc...")
+        conn = pyodbc.connect(conn_str)
+        logging.info("Connection to SQL Server successful!")
         return conn
     except Exception as e:
-        logging.error(f"Error connecting to SQL Server: {str(e)}")
+        logging.error(f"Error connecting to SQL Server with pyodbc: {str(e)}")
         raise
 
 def extract_and_load_to_staging():
@@ -48,6 +59,7 @@ def extract_and_load_to_staging():
         cursor.execute("TRUNCATE TABLE staging.EquipmentUsage")
         cursor.execute("TRUNCATE TABLE staging.Production") 
         cursor.execute("TRUNCATE TABLE staging.FinancialTransaction")
+        cursor.execute("TRUNCATE TABLE staging.Maintenance")
         
         # Load Equipment Usage data
         logging.info("Loading Equipment Usage data...")
@@ -65,7 +77,7 @@ def extract_and_load_to_staging():
                     equipment_type, manufacture, model, capacity, purchase_date,
                     operating_hours, downtime_hours, fuel_consumption, 
                     maintenance_cost, created_at, created_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, tuple(row))
             count += 1
             if count % 100 == 0:
@@ -88,7 +100,7 @@ def extract_and_load_to_staging():
                     site_name, region, latitude, longitude, material_name, material_type,
                     unit_of_measure, quantity, employee_name, position, department,
                     status, hire_date, shift_name, start_time, end_time
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, tuple(row))
             count += 1
             if count % 100 == 0:
@@ -113,7 +125,7 @@ def extract_and_load_to_staging():
                     day, day_name, month, year, site_name, region, latitude,
                     longitude, project_name, project_manager, status, start_date,
                     end_date, account_name, account_type, budget_category, cost
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, tuple(row))
             count += 1
             if count % 100 == 0:
@@ -121,6 +133,22 @@ def extract_and_load_to_staging():
         
         logging.info(f"Loaded {count} transaction records")
         
+# Load Maintenance data
+        logging.info("Loading Maintenance data...")
+        maintenance_df = pd.read_csv('data/raw/Dataset/dataset_maintenance.csv')
+        maintenance_df['date'] = pd.to_datetime(maintenance_df['date']).dt.date
+        
+        count = 0
+        for _, row in maintenance_df.iterrows():
+            cursor.execute("""
+                INSERT INTO staging.Maintenance (
+                    maintenance_id, date, equipment_name, site_name, 
+                    maintenance_cost, downtime_duration_hours
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, tuple(row))
+            count += 1
+        logging.info(f"Loaded {count} maintenance records")
+
         conn.commit()
         conn.close()
         
@@ -363,6 +391,24 @@ def load_fact_tables():
                 SELECT 1 FROM fact.FactFinancialTransaction ft 
                 WHERE ft.transaction_id = f.id
             )
+        """)
+
+        logging.info("Loading FactMaintenance...")
+        cursor.execute("""
+            INSERT INTO fact.FactMaintenance (
+                time_key, equipment_key, site_key, 
+                maintenance_cost, downtime_duration_hours
+            )
+            SELECT
+                t.time_key,
+                eq.equipment_key,
+                s.site_key,
+                stg.maintenance_cost,
+                stg.downtime_duration_hours
+            FROM staging.Maintenance stg
+            JOIN dim.DimTime t ON stg.date = t.date
+            JOIN dim.DimEquipment eq ON stg.equipment_name = eq.equipment_name
+            JOIN dim.DimSite s ON stg.site_name = s.site_name;
         """)
         
         conn.commit()

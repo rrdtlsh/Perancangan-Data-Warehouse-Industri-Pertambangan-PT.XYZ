@@ -205,6 +205,12 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
     command: >
       bash -c "
       superset db upgrade &&
@@ -290,8 +296,7 @@ services:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: ptxyz_db_init
     environment:
-      - SA_PASSWORD=${MSSQL_SA_PASSWORD:-PTXYZSecure123!}
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-PTXYZSecure123!}
+      MSSQL_SA_PASSWORD: '${MSSQL_SA_PASSWORD}'
     volumes:
       - ./init-scripts:/docker-entrypoint-initdb.d
       - ./misi3:/scripts
@@ -300,7 +305,7 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
-    command: /docker-entrypoint-initdb.d/init-db.sh
+    command: ["bash", "/docker-entrypoint-initdb.d/init-db.sh"]
     restart: "no"
 
 volumes:
